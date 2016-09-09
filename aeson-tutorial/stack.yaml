@@ -1,0 +1,8 @@
+resolver:
+  name: bblts-6.9
+  location: https://bbhackage.dev.bloomberg.com/stack/bblts/bblts-6.9.yaml
+packages:
+- '.'
+extra-deps: []
+flags: {}
+extra-package-dbs: []

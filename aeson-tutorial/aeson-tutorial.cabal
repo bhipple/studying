@@ -1,0 +1,25 @@
+name:                aeson-tutorial
+version:             0.1.0.0
+synopsis:            Initial project template from stack
+description:         Please see README.md
+homepage:            https://github.com/bhipple/studying/aeson-tutorial#readme
+license:             MIT
+license-file:        LICENSE
+author:              Benjamin Hipple
+copyright:           None
+category:            Misc
+build-type:          Simple
+cabal-version:       >=1.10
+
+executable aeson-tutorial
+  hs-source-dirs:      .
+  main-is:             Main.hs
+  ghc-options:         -Wall -threaded -rtsopts "-with-rtsopts=-N -T"
+  build-depends:       base
+                     , aeson
+                     , text
+                     , scientific
+                     , yaml
+                     , vector
+                     , unordered-containers
+  default-language:    Haskell2010
