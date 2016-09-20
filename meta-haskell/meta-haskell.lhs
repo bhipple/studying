@@ -34,7 +34,9 @@ gen (S:xs) x = [| \s -> $(gen xs [| $x ++ s |]) |]
 gen (L s:xs) x = gen xs [| $x ++ $(lift s) |]
 \end{code}
 
-3. Why templates?
+- =============================================================================
+-                             3: Why templates?
+- =============================================================================
 * Conditional compilation
 * Program reification
 * Algorithmic program construction
@@ -42,7 +44,9 @@ gen (L s:xs) x = gen xs [| $x ++ $(lift s) |]
 * Optimizations
 * Compile-time functions written and executed in natural Haskell code
 
-4. Flexible Constructions
+- =============================================================================
+-                         4: Flexible Constructions
+- =============================================================================
 * Selecting the kth element out of a n-tuple, e.g. selecting the 1st element
 from a triple:
 
@@ -221,7 +225,9 @@ Typically, the simple QuasiQuote notation will be enough, but we need to drop
 down to the more explicit style in some cases, such as when dealing with
 indeterminate length.
 
-5. Declarations and Reification
+- =============================================================================
+-                      5: Declarations and Reification
+- =============================================================================
 Generalized deriving is inspired by a library called DrIFT.
 
 \begin{code}
@@ -232,7 +238,9 @@ splice (genEq (reifyDecl T))
 
 splice (...) appears where a declaration group is needed; contrast with $(...), which is for an expression.
 
-6. Static Scoping
+- =============================================================================
+-                             6: Static Scoping
+- =============================================================================
 Consider:
 \begin{code}
 cross2a :: Expr -> Expr -> Expr
@@ -266,11 +274,11 @@ The Three Layers of Template Haskell:
 
 The latter two layers are convenience interfaces to the first.
 
--- Syntax Construction Functions
+6.3. Syntax Construction Functions
 Using the monadic construction functions allows us to simplify cross2c slightly:
 \begin{code}
 cross2d :: Expr -> Expr -> Expr
-crodd2d f g = do 
+crodd2d f g = do
     x <- gensym "x"
     y <- gensym "y"
     lam [ptup [pvar x, pvar y]]
@@ -290,3 +298,169 @@ cross2e f g = do
 -- names of the variables in the alpha reduced pattern.
 genpat :: Patt -> Q (String -> Expr, Patt)
 \end{code}
+
+-- ============================================================================
+--                      7: Typing Template Haskell
+-- ============================================================================
+Basic Hindley-Milner type checking is insuffucient because the type of a spliced
+expression that we're checking may depend on the value of its (not spliced)
+arguments, as in the printf case.
+
+This moves in three stages:
+1. Type-check the body of the splice, with normal typing rules
+  (often resulting in type :: Expr)
+2. Compile, execute, and splice result in place of the splice expression
+3. Standard type-check the result as-if the human had written that
+
+Consequences: TH is compile-template only! Once the outer splices are finished
+evaluating, all inner splices must also be finished! Can't punt to runtime TH.
+
+Compiler moves between these states:
+* Compiling State (C)
+    - Compiling regular code
+-> Bracket State (B)
+    * Compiling code inside quasi-quotes
+-> Splicing (S)
+    * Encounters expression escaped inside quasi-quoting brackets
+
+also counts levels, to keep track of nested depths.
+
+7.2. Declarations
+Since further compiled calls may depend on declarations generated from previous
+splices, the program is compiled top-to-bottom!
+e.g.,
+\begin{code}
+splice (genZips 20)
+foo = zip3 "fee" "fie" "fum"
+\end{code}
+
+Moreover, splices have to be top level declarations, like ``data`, `class`, and
+`instance`. This is to avoid ambiguity about where a variable in the program is
+bound. It also prevents a nested splice from shadowing a binding of its parent
+splice unintentionally.
+
+Think of a top-level splice as a "programmable import."
+
+- =============================================================================
+-                            8: Quatation Monad
+- =============================================================================
+8.1 Reification
+Allows TH to query the state of the compiler's internal symbol tables.
+
+\begin{code}
+module M where
+
+data T a = Tip a | Fork (T a) (T a)
+
+repT :: Decl
+repT = reifyDecl T
+
+-- The type of the length function
+lengthType :: Type
+lengthType = reifyType length
+
+-- Get the fixity of the % operator
+percentFixity :: Q Int
+percentFixity = reifyFixity (%)
+
+-- Get the source file and line number
+here :: Q String
+here = reifyLocn
+
+-- Get -DDEBUG compiler flag
+reifyOpt "DEBUG"
+\end{code}
+
+This can be particularly useful for implementing assertions!
+
+8.4 Printing Code
+We have `runQ :: Q a -> IO a` to print code generated by Template Haskell.
+This is useful for learning and debugging, among other things.
+
+8.5 Implementing Q
+\begin{code}
+newtype Q a = Q (Env -> IO a)
+\end{code}
+
+As of the writing of the paper, the environment for Q contained:
+* Mutable location used as a name supply for gensym
+* Source location of the top-level splice that invoked the evaluation
+* Compiler's symbol table
+* Command-line switches
+
+- =============================================================================
+-                   9. Quasi-quotes and Lexical Scoping
+- =============================================================================
+TH has hygienic macros, which means: every occurrence of a variable is bound
+to the value that is lexically in scope at the occurrence site in the original
+source program, before any template expansion.
+
+9.1. Cross-stage Persistence
+We use the concept of "original name" Foo:Bar to mean the Bar defined in the
+module Foo. Original names are not accessible in normal Haskell. Including in
+generated code the value of a variable that exists at compile-time is called
+"cross-stage persistence."
+
+9.2. Dynamic Scoping
+If instead we want dynamic scoping, we can do this:
+\begin{code}
+genSwapDyn x = [| $(var "swap") x |]
+\end{code}
+and now when this expands to `swap (4,5)`, the swap we get will be the
+swap in scope at the splice site, regardless of what was in scope at
+the definition of genSwapDyn.  Cool!
+
+9.3. Implementing quasi-quote
+Implemented in terms of original names, syntax constructor functions, gensym,
+do, return, and lift.
+
+TranslateExpression function:
+\begin{code}
+trE :: VEnv -> Exp -> Exp
+
+trE  cl (App a b) = App (App (Var "app") (trans a)) (trans b)
+...
+
+type VEnv = String -> VarClass
+data VarClass = Orig ModName | Lifted | Bound
+\end{code}
+
+The environment handles different treatments for variables depending on where they're bound:
+* Orig m => v is bound at the top level of module m, with original name m:v
+* Lifted => v is bound outside the quasi-quotes, but not at the top level. Generate a call to `lift`
+* Bound => v is bound in the quasi-quotes and needs alpha-renaming with gensym
+
+- =============================================================================
+-                            10. Related Work
+- =============================================================================
+10.1. C++ Templates
+Extraordinarily baroque functional programming language full of ad hoc tricks
+and conventions with high barrier to entry. Operates fully in the type system.
+
+10.2 Scheme Macros
+Aside from the obvious static vs. dynamic typing differences, the scheme system
+is both more powerful and less tractable than TH in the following ways:
+* Arbitrary recursive binding: `(foo k (+ k 1))` can exapnd to `(lambda k (* 2 (+ k 1)))`.
+  while TH restricts declarations to the top level.
+  TH can do the above as: `$(foo "k" [| $(var "k") + 1 |])`
+* Scheme has no special syntax for macros at the call site, while TH must use the
+  splice notation $.  TH doesn't have to have special syntax at the definition site,
+  while Scheme requires `define-syntax`. Hence Scheme macros must be called by name, while
+  TH macros are completely higher-order and first class and can be passed as args,
+  used in lambdas, etc.
+* Scheme allows side-effects
+
+10.3. MetaML
+Features in TH inspired by MetaML:
+* Quasi-quote notation
+* Type-safety before template executation and at compile time
+* Lexical scoping with alpha reduction to avoid inadvertent capture
+* Cross-stage persistence
+
+And some differences:
+* All TH code is built at compile-time, and there is no runtime overhead; MetaML
+  allows runtime macros
+* TH uses ADT representation of code, which allows reflection without sacrificing
+  lexical scoping or quasi-quotation
+* TH uses delayed checking with just-in-time type checking
+* All hand-written code is reifiable in TH
